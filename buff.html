@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VMOS </title>
+    <script>
+        function md5(string) {
+            return crypto.subtle.digest("MD5", new TextEncoder().encode(string)).then(buf => {
+                return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+            });
+        }
+
+        async function requestWithRetry(fn, retries = 5, delay = 5000) {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    return await fn();
+                } catch (error) {
+                    console.warn(`Thử lại sau ${delay / 1000}s... (${i + 1}/${retries})`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+            throw new Error('Đã hết số lần thử, yêu cầu thất bại');
+        }
+
+        async function createMail() {
+            return requestWithRetry(async () => {
+                const response = await fetch('https://api.internal.temp-mail.io/api/v3/email/new', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ min_name_length: 10, max_name_length: 10 })
+                });
+                return response.json();
+            });
+        }
+
+        async function readMail(email) {
+            return requestWithRetry(async () => {
+                const response = await fetch(`https://api.internal.temp-mail.io/api/v3/email/${email}/messages`);
+                return response.json();
+            });
+        }
+
+        async function getCode(mail) {
+            let code = null;
+            while (!code) {
+                const messages = await readMail(mail.email);
+                if (messages.length > 0) {
+                    const text = messages[0].body_text;
+                    code = text.match(/\d+/g)?.[0] || null;
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            return code;
+        }
+
+        async function sendCode(mail) {
+            return requestWithRetry(async () => {
+                await fetch('https://api.vmoscloud.com/vcpcloud/api/sms/smsSend', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ smsType: 2, mobilePhone: mail.email })
+                });
+            });
+        }
+
+        async function regvmos() {
+            const channel = document.getElementById("channelInput").value || 'agwrannx';
+            const mail = await createMail();
+            document.getElementById("output").innerText = `Đã tạo email: ${mail.email}`;
+            await sendCode(mail);
+            const code = await getCode(mail);
+            const password = await md5("androidmodvip");
+
+            await requestWithRetry(async () => {
+                await fetch('https://api.vmoscloud.com/vcpcloud/api/user/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        mobilePhone: mail.email,
+                        loginType: 0,
+                        verifyCode: code,
+                        password,
+                        channel
+                    })
+                });
+            });
+        }
+    </script>
+</head>
+<body>
+    <input type="text" id="channelInput" placeholder="Nhập mã mời">
+    <button onclick="regvmos()">buff VMOS</button>
+    <pre id="output"></pre>
+</body>
+</html>
